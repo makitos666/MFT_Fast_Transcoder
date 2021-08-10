@@ -28,18 +28,21 @@ This tool extracts in an instant a list of files and folders hosted on an NTFS i
 For now, there are 3 ways of working:
 
 To dump the MFT from a partition to a file.
+
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; dump [drive_letter] [MFT_result_path]
 ```sh
 dump c "D:\MFT.file"
 ```
 
 To parse previously dumped MFT file.
+
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; transcode [MFT_file_path] [CSV_result_path]
 ```sh
 transcode "D:\MFT.file" "D:\MFT.csv"
 ```
 
 To direct transcode the MFT of a partition to a CSV file.
+
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; DT [drive_letter] [CSV_result_path]
 ```sh
 DT c "D:\MFT.csv"
@@ -62,6 +65,9 @@ Memory is sacrificed in favor of high execution speed.
 Likewise, any contribution in the form of code is welcome.
 
 Ideas are worth as gold, so another great way to contribute is by sending your feedback on improvement.
+
+Want to buy me a coffe?
+ETH: 0x911C6cC26a9797401FDa69Aeb7d3f69c49A70dC3
 
 ## Acknowledgments
 
