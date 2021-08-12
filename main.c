@@ -805,7 +805,7 @@ int main(int argc, char* argv[])
 	} else if (strcmp("transcode", argv[1]) == 0 && argc == 4) {
 		// I'm  not going to check if input params are a good path
 		// because if later fopen_s opens them it's OK for me
-		MFTTranscode(argv[2], argv[3], 0, (wchar_t)"?");
+		MFTTranscode(argv[2], argv[3], 0, (wchar_t*)"?");
 	} else if (strcmp("DT", argv[1]) == 0 && argc == 4) {
 		if (strlen(argv[2]) == 1) {
 			int letter = toupper(*argv[2]);
