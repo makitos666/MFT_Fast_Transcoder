@@ -825,7 +825,7 @@ int main(int argc, char* argv[])
 		} else {
 			printf("Not a valid disk letter.");
 		}
-	} esle {
+	} else {
 		printf("usage:\n\tmft.exe dump [Drive letter] [MFT Dump] \n\tDumps the MFT of the selected drive into the described file \n\n\ttranscode [MFT Dump] [CSV Result] \n\tProceses the MFT of the selected drive into a CSV to the described file\n\n\tDT [Drive letter][CSV Result] \n\tThe two other options together");
 		exit(1);
 	}
