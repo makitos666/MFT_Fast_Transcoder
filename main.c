@@ -127,6 +127,32 @@ typedef struct {
 	size_t size;
 } memoryFile;
 
+typedef struct {
+	unsigned char* fileContent;
+	size_t totalSpace;
+	size_t occupiedSpace;
+} paginationStruct;
+
+inline void pageSave(paginationStruct* result_pages, char* whatToSave, int* currentPage, size_t size) {
+	if (result_pages[*currentPage].occupiedSpace + size > result_pages[*currentPage].totalSpace) { //no more space in this page, create a new one
+		if (*currentPage == 1024) {
+			printf("This MFT is ridiculously big or there is any other BUG. Open an issue ^^");
+			exit(1);
+		}
+		*currentPage = (*currentPage + 1);
+		unsigned char* page = (unsigned char*)malloc(100000000);
+		if (page == NULL) {
+			printf("Not enough memory");
+			exit(1);
+		}
+		result_pages[*currentPage].fileContent = page;
+		result_pages[*currentPage].totalSpace = 100000000;
+		result_pages[*currentPage].occupiedSpace = 0;
+	}
+	memcpy_s(&result_pages[*currentPage].fileContent[result_pages[*currentPage].occupiedSpace], size, whatToSave, size);
+	result_pages[*currentPage].occupiedSpace += size;
+}
+
 memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 	HANDLE drive;
 	DWORD bytesAccessed;
@@ -158,8 +184,7 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 	// Open RAW device
 	swprintf(wszDrive, 7, L"\\\\.\\%ls:", disk);
 	drive = CreateFile(wszDrive, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
-	if (drive == INVALID_HANDLE_VALUE)
-	{
+	if (drive == INVALID_HANDLE_VALUE) {
 		printf("Error accessing Drive. Maybe incorrect letter maybe you have not sufficient privileges.\n");
 		exit(1);
 	}
@@ -167,14 +192,12 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 	if (toFile == 1) {
 		// Open and check permisions for results file
 		err = fopen_s(&MFTFile, destination, "w+b");
-		if (err != 0)
-		{
+		if (err != 0) {
 			strerror_s(errorMSG, 256, err);
 			printf("Error creating output file: %s\n", errorMSG);
 			exit(1);
 		}
-	}
-	else {
+	} else {
 		MFTFile = NULL;
 	}
 
@@ -208,15 +231,12 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 			if (mftFile2 == NULL) {
 				printf("Error re-allocating memory for MFT File.\n");
 				exit(1);
-			}
-			else {
+			} else {
 				mftFile = mftFile2;
 			}
-		}
-		else if (attribute->attributeType == 0xFFFFFFFF) {
+		} else if (attribute->attributeType == 0xFFFFFFFF) {
 			break;
 		}
-
 		attribute = (AttributeHeader*)((uint8_t*)attribute + attribute->length);
 	}
 
@@ -288,13 +308,14 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* letter) {
 	char* MFTFilePath;
 	FILE* mft_file_pointer;
-	//unsigned char* res = (unsigned char*) malloc(5368709120); //TODO: page this allocations
 	size_t res_size = 0;
-	unsigned int maxFiles = 0;
+	size_t maxFiles = 0;
 	errno_t err;
 	size_t fsize;
 	unsigned char* mft_file_contents;
-	char errorMSG[1024];
+	//char errorMSG[1024];
+	char* errorMSG = (char*)malloc(1024);
+
 	uint64_t fileCount = 0;
 	FilesAndFolders* files; 
 	FilesAndFolders* folders;
@@ -304,8 +325,7 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 	if (inputType == 0) { // Read from file to memory
 		MFTFilePath = (char*)_MFTFilePath;
 		err = fopen_s(&mft_file_pointer, MFTFilePath, "rb");
-		if (err != 0)
-		{
+		if (err != 0) {
 			strerror_s(errorMSG, 256, err);
 			printf("Error reading MFT File: %s\n", errorMSG);
 			exit(6);
@@ -367,16 +387,12 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 		// It seems a technique to know if the entry are OK or corrupted (for example, due a unterminated write)
 		// Thanks to: https://github.com/dkovar/analyzeMFT
 		uint64_t seq_number = *(uint16_t*)((uint64_t)fileRecord + 48);
-		if (seq_number == *(uint16_t*)((uint64_t)fileRecord + 510) && seq_number == *(uint16_t*)((uint64_t)fileRecord + 1022))
-		{
+		if (seq_number == *(uint16_t*)((uint64_t)fileRecord + 510) && seq_number == *(uint16_t*)((uint64_t)fileRecord + 1022)) {
 			uint16_t seq_attr1, seq_attr2 = 0;
-			if (fileRecord->updateSequenceOffset == 42)
-			{
+			if (fileRecord->updateSequenceOffset == 42) {
 				seq_attr1 = *(uint16_t*)((uint64_t)fileRecord + 44);
 				seq_attr2 = *(uint16_t*)((uint64_t)fileRecord + 46);
-			}
-			else
-			{
+			} else {
 				seq_attr1 = *(uint16_t*)((uint64_t)fileRecord + 50);
 				seq_attr2 = *(uint16_t*)((uint64_t)fileRecord + 52);
 			}
@@ -398,11 +414,9 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 				if (attribute2->attributeType == 0x10) {
 					standardInformation = (StandardInformation*)attribute2;
 					break;
-				}
-				else if (attribute2->attributeType == 0xFFFFFFFF) {
+				} else if (attribute2->attributeType == 0xFFFFFFFF) {
 					break;
 				}
-
 				attribute2 = (AttributeHeader*)((uint64_t)attribute2 + attribute2->length);
 			}
 			fileReference = fileRecord2->fileReference;
@@ -427,12 +441,10 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 						folders[fileRecord->recordNumber].recordNumber = fileRecord->recordNumber;
 						folders[fileRecord->recordNumber].parentRecordNumber = fileNameAttribute->parentRecordNumber;
 						folders[fileRecord->recordNumber].fileNameLength = fileNameAttribute->fileNameLength;
-
 						folders[fileRecord->recordNumber].creationTime = standardInformation->fileCreationTime;
 						folders[fileRecord->recordNumber].modificationTime = standardInformation->fileAlteredTime;
 						folders[fileRecord->recordNumber].metadataTime = standardInformation->changedTime;
 						folders[fileRecord->recordNumber].accesTime = standardInformation->fileReadTime;
-
 						folders[fileRecord->recordNumber].FNcreationTime = fileNameAttribute->creationTime;
 						folders[fileRecord->recordNumber].FNmodificationTime = fileNameAttribute->modificationTime;
 						folders[fileRecord->recordNumber].FNmetadataTime = fileNameAttribute->metadataModificationTime;
@@ -444,17 +456,14 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 							files[fileCount].recordNumber = fileRecord->recordNumber;
 							files[fileCount].parentRecordNumber = fileNameAttribute->parentRecordNumber;
 							files[fileCount].fileNameLength = fileNameAttribute->fileNameLength;
-
 							files[fileCount].creationTime = standardInformation->fileCreationTime;
 							files[fileCount].modificationTime = standardInformation->fileAlteredTime;
 							files[fileCount].metadataTime = standardInformation->changedTime;
 							files[fileCount].accesTime = standardInformation->fileReadTime;
-
 							files[fileCount].FNcreationTime = fileNameAttribute->creationTime;
 							files[fileCount].FNmodificationTime = fileNameAttribute->modificationTime;
 							files[fileCount].FNmetadataTime = fileNameAttribute->metadataModificationTime;
 							files[fileCount].FNaccesTime = fileNameAttribute->readTime;
-
 							fileCount++;
 						}
 					}
@@ -470,19 +479,20 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 		}
 	}
 
-	// If there is not enough with this, windows will fail with memcpy_s.
-	// TODO: Maybe check in every memcpy if there is enough memory left, but I don't want to make a lot of cheks that will reduce performance 
-	uint64_t aproxBytes = fileCount * (200 + 161 + 100); //this numbers are extracted as the worst average within a lot of attempts in different MFTs
-	// OVERFLOW ALERT XD
-	unsigned char* res = (unsigned char*)malloc(aproxBytes);
-	if (res == NULL) {
+	int currentPage = 0;
+	paginationStruct* result_pages = (paginationStruct *) malloc(sizeof(paginationStruct)*1024); //1024 pages will be far far far enough
+	uint64_t aproxBytes = fileCount * (250 + 168); // I'm assuming an avereage of 250 characters per file/folder path and the rest of the parameters are 168 characters lenght
+	unsigned char* page = (unsigned char*)malloc(aproxBytes); // because we are going to track the occupied size, trhere is no need to init this space
+	if (page == NULL) {
 		printf("Not enough memory");
 		exit(1);
 	}
+	result_pages[currentPage].fileContent = page;
+	result_pages[currentPage].totalSpace = aproxBytes;
+	result_pages[currentPage].occupiedSpace = 0;
 
 	char* header = "File or Folder|File|$STDINFO Creation Time|$STDINFO Modification Time|$STDINFO Metadata change Time|$STDINFO Access Time|$FILENAME Creation Time|$FILENAME Modification Time|$FILENAME Entry Modified Time|$FILENAME Access Time\n";
-	memcpy_s(&res[res_size], 225, header, 225);
-	res_size += 225;
+	pageSave(result_pages, header, &currentPage, 225);
 
 	wchar_t* start = (wchar_t*)malloc(3 * sizeof(wchar_t));
 	memcpy_s(start, 2, letter, 2);
@@ -494,12 +504,7 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 	size_t cnt = 0;
 	while (cnt <= maxFiles) {
 		if (folders[cnt].filename != NULL) {
-			memcpy_s(&res[res_size], 6, "Folder", 6);
-			res_size += 6;
-
-			memcpy_s(&res[res_size], 1, "|", 1);
-			res_size += 1;
-
+			pageSave(result_pages, "Folder|", &currentPage, 7);
 			uint64_t stack[200];
 			int top = -1;
 			uint64_t rnumber, pnumber;
@@ -509,8 +514,7 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 			stack[top] = rnumber;
 			top = top + 1;
 			stack[top] = pnumber;
-			while (rnumber != pnumber)
-			{
+			while (rnumber != pnumber) {
 				rnumber = folders[pnumber].recordNumber;
 				pnumber = folders[pnumber].parentRecordNumber;
 				top = top + 1;
@@ -518,8 +522,7 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 				top = top + 1;
 				stack[top] = pnumber;
 			}
-			while (top != -1)
-			{
+			while (top != -1) {
 				pnumber = stack[top];
 				top = top - 1;
 				rnumber = stack[top];
@@ -528,20 +531,15 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 					char* utf_name = (char*)malloc((size_t)folders[pnumber].fileNameLength + 1);
 					// If you know better way to convert from UTF16 to UTF8 I'm all ears
 					size_t resultBytes = WideCharToMultiByte(CP_UTF8, WC_NO_BEST_FIT_CHARS, folders[pnumber].filename, folders[pnumber].fileNameLength, utf_name, folders[pnumber].fileNameLength, NULL, NULL);
-					memcpy_s(&res[res_size], resultBytes, utf_name, resultBytes);
-					res_size += resultBytes;
-					memcpy_s(&res[res_size], 1, "\\", 1);
-					res_size += 1;
+					pageSave(result_pages, utf_name, &currentPage, resultBytes);
+					pageSave(result_pages, "\\", &currentPage, 1);
 				}
 			}
 
 			char* utf_name = (char*)malloc((size_t)folders[cnt].fileNameLength + 1);;
 			size_t resultBytes = WideCharToMultiByte(CP_UTF8, WC_NO_BEST_FIT_CHARS, folders[cnt].filename, folders[cnt].fileNameLength, utf_name, folders[cnt].fileNameLength, NULL, NULL);
-			memcpy_s(&res[res_size], resultBytes, utf_name, resultBytes);
-			res_size += resultBytes;
-
-			memcpy_s(&res[res_size], 1, "|", 1);
-			res_size += 1;
+			pageSave(result_pages, utf_name, &currentPage, resultBytes);
+			pageSave(result_pages, "|", &currentPage, 1);
 
 			FILETIME time;
 			SYSTEMTIME timeHuman;
@@ -551,93 +549,63 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 			time.dwHighDateTime = (DWORD)(folders[cnt].creationTime >> 32);
 			FileTimeToSystemTime(&time, &timeHuman);
 			sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
-
-			memcpy_s(&res[res_size], 19, timeString, 19);
-			res_size += 19;
-			memcpy_s(&res[res_size], 1, "|", 1);
-			res_size += 1;
+			pageSave(result_pages, timeString, &currentPage, 19);
+			pageSave(result_pages, "|", &currentPage, 1);
 
 			time.dwLowDateTime = (DWORD)folders[cnt].modificationTime;
 			time.dwHighDateTime = (DWORD)(folders[cnt].modificationTime >> 32);
 			FileTimeToSystemTime(&time, &timeHuman);
 			sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
-
-			memcpy_s(&res[res_size], 19, timeString, 19);
-			res_size += 19;
-			memcpy_s(&res[res_size], 1, "|", 1);
-			res_size += 1;
+			pageSave(result_pages, timeString, &currentPage, 19);
+			pageSave(result_pages, "|", &currentPage, 1);
 
 			time.dwLowDateTime = (DWORD)folders[cnt].metadataTime;
 			time.dwHighDateTime = (DWORD)(folders[cnt].metadataTime >> 32);
 			FileTimeToSystemTime(&time, &timeHuman);
 			sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
-
-			memcpy_s(&res[res_size], 19, timeString, 19);
-			res_size += 19;
-			memcpy_s(&res[res_size], 1, "|", 1);
-			res_size += 1;
+			pageSave(result_pages, timeString, &currentPage, 19);
+			pageSave(result_pages, "|", &currentPage, 1);
 
 			time.dwLowDateTime = (DWORD)folders[cnt].accesTime;
 			time.dwHighDateTime = (DWORD)(folders[cnt].accesTime >> 32);
 			FileTimeToSystemTime(&time, &timeHuman);
 			sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
-
-			memcpy_s(&res[res_size], 19, timeString, 19);
-			res_size += 19;
-			memcpy_s(&res[res_size], 1, "|", 1);
-			res_size += 1;
+			pageSave(result_pages, timeString, &currentPage, 19);
+			pageSave(result_pages, "|", &currentPage, 1);
 
 			time.dwLowDateTime = (DWORD)folders[cnt].FNcreationTime;
 			time.dwHighDateTime = (DWORD)(folders[cnt].FNcreationTime >> 32);
 			FileTimeToSystemTime(&time, &timeHuman);
 			sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
-
-			memcpy_s(&res[res_size], 19, timeString, 19);
-			res_size += 19;
-			memcpy_s(&res[res_size], 1, "|", 1);
-			res_size += 1;
+			pageSave(result_pages, timeString, &currentPage, 19);
+			pageSave(result_pages, "|", &currentPage, 1);
 
 			time.dwLowDateTime = (DWORD)folders[cnt].FNmodificationTime;
 			time.dwHighDateTime = (DWORD)(folders[cnt].FNmodificationTime >> 32);
 			FileTimeToSystemTime(&time, &timeHuman);
 			sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
-
-			memcpy_s(&res[res_size], 19, timeString, 19);
-			res_size += 19;
-			memcpy_s(&res[res_size], 1, "|", 1);
-			res_size += 1;
+			pageSave(result_pages, timeString, &currentPage, 19);
+			pageSave(result_pages, "|", &currentPage, 1);
 
 			time.dwLowDateTime = (DWORD)folders[cnt].FNmetadataTime;
 			time.dwHighDateTime = (DWORD)(folders[cnt].FNmetadataTime >> 32);
 			FileTimeToSystemTime(&time, &timeHuman);
 			sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
-
-			memcpy_s(&res[res_size], 19, timeString, 19);
-			res_size += 19;
-			memcpy_s(&res[res_size], 1, "|", 1);
-			res_size += 1;
+			pageSave(result_pages, timeString, &currentPage, 19);
+			pageSave(result_pages, "|", &currentPage, 1);
 
 			time.dwLowDateTime = (DWORD)folders[cnt].FNaccesTime;
 			time.dwHighDateTime = (DWORD)(folders[cnt].FNaccesTime >> 32);
 			FileTimeToSystemTime(&time, &timeHuman);
 			sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
-
-			memcpy_s(&res[res_size], 19, timeString, 19);
-			res_size += 19;
-
-			memcpy_s(&res[res_size], 1, "\n", 1);
-			res_size += 1;
+			pageSave(result_pages, timeString, &currentPage, 19);
+			pageSave(result_pages, "\n", &currentPage, 1);
 		}
 		cnt += 1;
 	}
 
-	for (int j = 0; j < fileCount; j++)
-	{
-		memcpy_s(&res[res_size], 4, "File", 4);
-		res_size += 4;
-
-		memcpy_s(&res[res_size], 1, "|", 1);
-		res_size += 1;
+	for (int j = 0; j < fileCount; j++) {
+		pageSave(result_pages, "File|", &currentPage, 5);
 
 		// Improvised shaky stack to rebuild file path.
 		uint64_t stack[200];
@@ -649,8 +617,7 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 		stack[top] = rnumber;
 		top = top + 1;
 		stack[top] = pnumber;
-		while (rnumber != pnumber)
-		{
+		while (rnumber != pnumber) {
 			rnumber = folders[pnumber].recordNumber;
 			pnumber = folders[pnumber].parentRecordNumber;
 			top = top + 1;
@@ -658,8 +625,7 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 			top = top + 1;
 			stack[top] = pnumber;
 		}
-		while (top != -1)
-		{
+		while (top != -1) {
 			pnumber = stack[top];
 			top = top - 1;
 			rnumber = stack[top];
@@ -668,20 +634,15 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 				char* utf_name = (char*)malloc((size_t)folders[pnumber].fileNameLength + 1);
 				// If you know better way to convert from UTF16 to UTF8 I'm all ears
 				size_t resultBytes = WideCharToMultiByte(CP_UTF8, WC_NO_BEST_FIT_CHARS, folders[pnumber].filename, folders[pnumber].fileNameLength, utf_name, folders[pnumber].fileNameLength, NULL, NULL);
-				memcpy_s(&res[res_size], resultBytes, utf_name, resultBytes);
-				res_size += resultBytes;
-				memcpy_s(&res[res_size], 1, "\\", 1);
-				res_size += 1;
+				pageSave(result_pages, utf_name, &currentPage, resultBytes);
+				pageSave(result_pages, "\\", &currentPage, 1);
 			}
 		}
 
 		char* utf_name = (char*)malloc((size_t)files[j].fileNameLength + 1);;
 		size_t resultBytes = WideCharToMultiByte(CP_UTF8, WC_NO_BEST_FIT_CHARS, files[j].filename, files[j].fileNameLength, utf_name, files[j].fileNameLength, NULL, NULL);
-		memcpy_s(&res[res_size], resultBytes, utf_name, resultBytes);
-		res_size += resultBytes;
-
-		memcpy_s(&res[res_size], 1, "|", 1);
-		res_size += 1;
+		pageSave(result_pages, utf_name, &currentPage, resultBytes); 
+		pageSave(result_pages, "|", &currentPage, 1);
 
 		FILETIME time;
 		SYSTEMTIME timeHuman;
@@ -691,88 +652,65 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 		time.dwHighDateTime = (DWORD)(files[j].creationTime >> 32);
 		FileTimeToSystemTime(&time, &timeHuman);
 		sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
-
-		memcpy_s(&res[res_size], 19, timeString, 19);
-		res_size += 19;
-		memcpy_s(&res[res_size], 1, "|", 1);
-		res_size += 1;
+		pageSave(result_pages, timeString, &currentPage, 19);
+		pageSave(result_pages, "|", &currentPage, 1); 
 
 		time.dwLowDateTime = (DWORD)files[j].modificationTime;
 		time.dwHighDateTime = (DWORD)(files[j].modificationTime >> 32);
 		FileTimeToSystemTime(&time, &timeHuman);
 		sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
-
-		memcpy_s(&res[res_size], 19, timeString, 19);
-		res_size += 19;
-		memcpy_s(&res[res_size], 1, "|", 1);
-		res_size += 1;
+		pageSave(result_pages, timeString, &currentPage, 19); 
+		pageSave(result_pages, "|", &currentPage, 1); 
 
 		time.dwLowDateTime = (DWORD)files[j].metadataTime;
 		time.dwHighDateTime = (DWORD)(files[j].metadataTime >> 32);
 		FileTimeToSystemTime(&time, &timeHuman);
 		sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
-
-		memcpy_s(&res[res_size], 19, timeString, 19);
-		res_size += 19;
-		memcpy_s(&res[res_size], 1, "|", 1);
-		res_size += 1;
+		pageSave(result_pages, timeString, &currentPage, 19); 
+		pageSave(result_pages, "|", &currentPage, 1); 
 
 		time.dwLowDateTime = (DWORD)files[j].accesTime;
 		time.dwHighDateTime = (DWORD)(files[j].accesTime >> 32);
 		FileTimeToSystemTime(&time, &timeHuman);
 		sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
-
-		memcpy_s(&res[res_size], 19, timeString, 19);
-		res_size += 19;
-		memcpy_s(&res[res_size], 1, "|", 1);
-		res_size += 1;
+		pageSave(result_pages, timeString, &currentPage, 19); 
+		pageSave(result_pages, "|", &currentPage, 1); 
 
 		time.dwLowDateTime = (DWORD)files[j].FNcreationTime;
 		time.dwHighDateTime = (DWORD)(files[j].FNcreationTime >> 32);
 		FileTimeToSystemTime(&time, &timeHuman);
 		sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
-
-		memcpy_s(&res[res_size], 19, timeString, 19);
-		res_size += 19;
-		memcpy_s(&res[res_size], 1, "|", 1);
-		res_size += 1;
+		pageSave(result_pages, timeString, &currentPage, 19); 
+		pageSave(result_pages, "|", &currentPage, 1); 
 
 		time.dwLowDateTime = (DWORD)files[j].FNmodificationTime;
 		time.dwHighDateTime = (DWORD)(files[j].FNmodificationTime >> 32);
 		FileTimeToSystemTime(&time, &timeHuman);
 		sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
-
-		memcpy_s(&res[res_size], 19, timeString, 19);
-		res_size += 19;
-		memcpy_s(&res[res_size], 1, "|", 1);
-		res_size += 1;
+		pageSave(result_pages, timeString, &currentPage, 19); 
+		pageSave(result_pages, "|", &currentPage, 1); 
 
 		time.dwLowDateTime = (DWORD)files[j].FNmetadataTime;
 		time.dwHighDateTime = (DWORD)(files[j].FNmetadataTime >> 32);
 		FileTimeToSystemTime(&time, &timeHuman);
 		sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
-
-		memcpy_s(&res[res_size], 19, timeString, 19);
-		res_size += 19;
-		memcpy_s(&res[res_size], 1, "|", 1);
-		res_size += 1;
+		pageSave(result_pages, timeString, &currentPage, 19); 
+		pageSave(result_pages, "|", &currentPage, 1); 
 
 		time.dwLowDateTime = (DWORD)files[j].FNaccesTime;
 		time.dwHighDateTime = (DWORD)(files[j].FNaccesTime >> 32);
 		FileTimeToSystemTime(&time, &timeHuman);
 		sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
-
-		memcpy_s(&res[res_size], 19, timeString, 19);
-		res_size += 19;
-
-		memcpy_s(&res[res_size], 1, "\n", 1);
-		res_size += 1;
+		pageSave(result_pages, timeString, &currentPage, 19); 
+		pageSave(result_pages, "\n", &currentPage, 1);
 	}
+
 	FILE* mft_res_file_pointer;
 	errno_t err2 = fopen_s(&mft_res_file_pointer, resultFile, "w+b");
-	if (err2 == 0 && mft_res_file_pointer != 0)
-	{
-		fwrite(res, 1, res_size, mft_res_file_pointer);
+	if (err2 == 0 && mft_res_file_pointer != 0) {
+		for (int pageNumber = 0; pageNumber <= currentPage; pageNumber++) {
+			fwrite(result_pages[pageNumber].fileContent, 1, result_pages[pageNumber].occupiedSpace, mft_res_file_pointer);
+		}
 		fclose(mft_res_file_pointer);
 	}
 }
@@ -805,7 +743,7 @@ int main(int argc, char* argv[])
 	} else if (strcmp("transcode", argv[1]) == 0 && argc == 4) {
 		// I'm  not going to check if input params are a good path
 		// because if later fopen_s opens them it's OK for me
-		MFTTranscode(argv[2], argv[3], 0, (wchar_t*)"?");
+		MFTTranscode(argv[2], argv[3], 0, (wchar_t*)L"?");
 	} else if (strcmp("DT", argv[1]) == 0 && argc == 4) {
 		if (strlen(argv[2]) == 1) {
 			int letter = toupper(*argv[2]);
