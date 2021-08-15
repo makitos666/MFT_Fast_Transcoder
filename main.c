@@ -158,27 +158,27 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 	DWORD bytesAccessed;
 	int read;
 	int MFT_FILE_SIZE = 1024;
-	uint64_t MFTTotalSize = MFT_FILE_SIZE, mftfile_size = 0;
+	uint64_t MFTTotalSize = MFT_FILE_SIZE, mftfile_size = 0, clusterNumber = 0, recordsProcessed = 0, bytesPerCluster = 0;
 	BootSector bootSector;
 	FILE* MFTFile;
 	LPSTR messageBuffer = NULL;
 	size_t writtenBytes;
-	errno_t err;
-	uint64_t clusterNumber = 0, recordsProcessed = 0, bytesPerCluster = 0;
 	LONG lpDistanceToMoveHigh;
-	char errorMSG[1024];
-
 	memoryFile* MFTStruct = (memoryFile*)malloc(sizeof(memoryFile));
 	wchar_t* wszDrive = (wchar_t*) malloc(14);
 	FileRecordHeader* fileRecord = (FileRecordHeader*) malloc(sizeof(FileRecordHeader));
+	FileRecordHeader* fileRecordFree = fileRecord;
 	AttributeHeader* attribute = (AttributeHeader*) malloc(sizeof(AttributeHeader));
+	AttributeHeader* attributeFree = attribute;
 	NonResidentAttributeHeader* dataAttribute = (NonResidentAttributeHeader*) malloc(sizeof(NonResidentAttributeHeader));
+	NonResidentAttributeHeader* dataAttributeFree = dataAttribute;
 	unsigned char* mftFile = (unsigned char*) malloc(MFT_FILE_SIZE);
 	RunHeader* dataRun = (RunHeader*) malloc(sizeof(RunHeader));
+	RunHeader* dataRunFree = dataRun;
 
 	if (MFTStruct == NULL || wszDrive == NULL || fileRecord == NULL || attribute == NULL || dataAttribute == NULL || mftFile == NULL || dataRun == NULL) {
 		printf("Unexpected error allocating memory");
-		exit(1);
+		goto exit;
 	}
 
 	// Open RAW device
@@ -186,16 +186,22 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 	drive = CreateFile(wszDrive, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
 	if (drive == INVALID_HANDLE_VALUE) {
 		printf("Error accessing Drive. Maybe incorrect letter maybe you have not sufficient privileges.\n");
-		exit(1);
+		goto exit;
 	}
 	
 	if (toFile == 1) {
+		errno_t err;
 		// Open and check permisions for results file
 		err = fopen_s(&MFTFile, destination, "w+b");
 		if (err != 0) {
-			strerror_s(errorMSG, 256, err);
-			printf("Error creating output file: %s\n", errorMSG);
-			exit(1);
+			char* errorMSG = (char *) malloc(1024);
+			if (errorMSG != NULL) {
+				strerror_s(errorMSG, 256, err);
+				printf("Error creating output file: %s\n", errorMSG);
+				free(errorMSG);
+			}
+			printf("Unexpected error in error\n");
+			goto exit;
 		}
 	} else {
 		MFTFile = NULL;
@@ -206,7 +212,7 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 	read = ReadFile(drive, &bootSector, 512, &bytesAccessed, NULL);
 	if (read == 0) {
 		printf("Error reading from dirve.\n");
-		exit(1);
+		goto exit;
 	}
 
 	// Calcualte and read first MFT FILE record
@@ -217,7 +223,7 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 	mftfile_size += MFT_FILE_SIZE;
 	if (read == 0) {
 		printf("Error reading from dirve.\n");
-		exit(1);
+		goto exit;
 	}
 	
 	fileRecord = (FileRecordHeader*)mftFile;
@@ -230,7 +236,7 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 			unsigned char* mftFile2 = realloc(mftFile, MFTTotalSize);
 			if (mftFile2 == NULL) {
 				printf("Error re-allocating memory for MFT File.\n");
-				exit(1);
+				goto exit;
 			} else {
 				mftFile = mftFile2;
 			}
@@ -271,13 +277,13 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 
 		if ((mftfile_size + count) > MFTTotalSize) { // We only allocated MFTTotalSize bytes. If MFT headers are wrong the program will fail
 			printf("Unexpected error allocating memory.\n");
-			exit(1);
+			goto exit;
 		}
 		read = ReadFile(drive, &mftFile[mftfile_size], (DWORD)count, &bytesAccessed, NULL); // ReadFile also checks if output buffer is big enough
 		// It's also OK to convert 64 bit count to 32 bit in ReadFile. I think that is impossible to get >4GB chuck of MFT.   
 		if (read == 0) {
 			printf("Error reading from dirve.\n");
-			exit(1);
+			goto exit;
 		}
 
 		mftfile_size += count;
@@ -290,32 +296,46 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 			if (writtenBytes != mftfile_size) {
 				printf("Error writting to output file.\n");
 				fclose(MFTFile);
-				exit(1);
+				goto exit;
 			}
 			fclose(MFTFile);
 		} else {
 			printf("Error writting to output file, file handle closed unexpectedly.\n");
-			exit(1);
+			goto exit;
 		}
 		printf("MFT file dumped correctly to: \"%s\".\n", destination);
 	}
 	// Return de MFT memory file to transcode if necessary
 	MFTStruct->fileContent = mftFile;
 	MFTStruct->size = mftfile_size;
+
+	free(wszDrive);
+	free(fileRecordFree);
+	free(attributeFree);
+	free(dataAttributeFree);
+	free(dataRunFree);
+
 	return MFTStruct;
+
+exit:
+	free(MFTStruct);
+	free(wszDrive);
+	free(fileRecordFree);
+	free(attributeFree);
+	free(dataAttributeFree);
+	free(mftFile);
+	free(dataRunFree);
+
+	exit(1);
 }
 
 void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* letter) {
-	char* MFTFilePath;
 	FILE* mft_file_pointer;
 	size_t res_size = 0;
 	size_t maxFiles = 0;
-	errno_t err;
 	size_t fsize;
 	unsigned char* mft_file_contents;
-	//char errorMSG[1024];
 	char* errorMSG = (char*)malloc(1024);
-
 	uint64_t fileCount = 0;
 	FilesAndFolders* files; 
 	FilesAndFolders* folders;
@@ -323,6 +343,8 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 	// I'm reusing _MFTFilePath to input both filepath or memoryFile
 	// Because Dump&Transcode functionality
 	if (inputType == 0) { // Read from file to memory
+		errno_t err;
+		char* MFTFilePath;
 		MFTFilePath = (char*)_MFTFilePath;
 		err = fopen_s(&mft_file_pointer, MFTFilePath, "rb");
 		if (err != 0) {
@@ -330,6 +352,7 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 			printf("Error reading MFT File: %s\n", errorMSG);
 			exit(6);
 		}
+		free(errorMSG);
 		fseek(mft_file_pointer, 0, SEEK_END);
 		fsize = ftell(mft_file_pointer);
 		if (fsize == 0) {
@@ -358,19 +381,20 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 	}
 
 	maxFiles = (fsize / 1024) * 2; // MFT entries are 1024 bytes in size. One File or Directory per entry.
-	files = (FilesAndFolders*) malloc(maxFiles * sizeof(FilesAndFolders));
-	folders = (FilesAndFolders*) malloc(maxFiles * sizeof(FilesAndFolders));
+	size_t mallocSize = maxFiles * sizeof(FilesAndFolders);
+	files = (FilesAndFolders*) malloc(mallocSize);
+	folders = (FilesAndFolders*) malloc(mallocSize);
 	// We are allocating a hundreds of megabytes
-	if (files == NULL || folders == NULL) {
+	if (files == NULL || folders == NULL || maxFiles < 5) { //5 is the minimum number of elements in a MFT
 		printf("Not enough RAM");
 		exit(1);
 	}
-	memset(files, 0, maxFiles * sizeof(FilesAndFolders));
-	memset(folders, 0, maxFiles * sizeof(FilesAndFolders));
+	memset(files, 0, mallocSize);
+	memset(folders, 0, mallocSize);
 
 	// Some sanity checks.
 	int magicNumberCheck = memcmp(mft_file_contents, "FILE", 4);
-	if (magicNumberCheck != 0 || fsize < 1024 || mft_file_contents == NULL) {
+	if (magicNumberCheck != 0 || fsize < 1024) {
 		printf("Invalid MFT file");
 		exit(1);
 	}
@@ -731,6 +755,7 @@ int main(int argc, char* argv[])
 					letterW[0] = (wchar_t)letter;
 					letterW[1] = 0;
 					memoryFile* MFTFile = MFTDump(letterW, argv[3], 1);
+					free(MFTFile);
 				} else {
 					printf("Unexpected allocation error.");
 				}
@@ -754,6 +779,7 @@ int main(int argc, char* argv[])
 					letterW[1] = 0;
 					memoryFile* MFTFile = MFTDump(letterW, NULL, 0);
 					MFTTranscode(MFTFile, argv[3], 1, letterW);
+					free(MFTFile);
 				} else {
 					printf("Unexpected allocation error.");
 				}
