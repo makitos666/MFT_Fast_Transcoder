@@ -154,7 +154,7 @@ inline void pageSave(paginationStruct* result_pages, char* whatToSave, int* curr
 }
 
 memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
-	HANDLE drive;
+	HANDLE drive = NULL;
 	DWORD bytesAccessed;
 	int read;
 	int MFT_FILE_SIZE = 1024;
@@ -166,19 +166,15 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 	LONG lpDistanceToMoveHigh;
 	memoryFile* MFTStruct = (memoryFile*)malloc(sizeof(memoryFile));
 	wchar_t* wszDrive = (wchar_t*) malloc(14);
-	FileRecordHeader* fileRecord = (FileRecordHeader*) malloc(sizeof(FileRecordHeader));
-	FileRecordHeader* fileRecordFree = fileRecord;
-	AttributeHeader* attribute = (AttributeHeader*) malloc(sizeof(AttributeHeader));
-	AttributeHeader* attributeFree = attribute;
-	NonResidentAttributeHeader* dataAttribute = (NonResidentAttributeHeader*) malloc(sizeof(NonResidentAttributeHeader));
-	NonResidentAttributeHeader* dataAttributeFree = dataAttribute;
+	FileRecordHeader* fileRecord;
+	AttributeHeader* attribute;
+	NonResidentAttributeHeader* dataAttribute = NULL;
 	unsigned char* mftFile = (unsigned char*) malloc(MFT_FILE_SIZE);
-	RunHeader* dataRun = (RunHeader*) malloc(sizeof(RunHeader));
-	RunHeader* dataRunFree = dataRun;
+	RunHeader* dataRun;
 
-	if (MFTStruct == NULL || wszDrive == NULL || fileRecord == NULL || attribute == NULL || dataAttribute == NULL || mftFile == NULL || dataRun == NULL) {
+	if (MFTStruct == NULL || wszDrive == NULL || mftFile == NULL) {
 		printf("Unexpected error allocating memory");
-		goto exit;
+		goto exitMFTDump;
 	}
 
 	// Open RAW device
@@ -186,7 +182,7 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 	drive = CreateFile(wszDrive, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
 	if (drive == INVALID_HANDLE_VALUE) {
 		printf("Error accessing Drive. Maybe incorrect letter maybe you have not sufficient privileges.\n");
-		goto exit;
+		goto exitMFTDump;
 	}
 	
 	if (toFile == 1) {
@@ -201,7 +197,7 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 				free(errorMSG);
 			}
 			printf("Unexpected error in error\n");
-			goto exit;
+			goto exitMFTDump;
 		}
 	} else {
 		MFTFile = NULL;
@@ -212,7 +208,7 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 	read = ReadFile(drive, &bootSector, 512, &bytesAccessed, NULL);
 	if (read == 0) {
 		printf("Error reading from dirve.\n");
-		goto exit;
+		goto exitMFTDump;
 	}
 
 	// Calcualte and read first MFT FILE record
@@ -223,7 +219,7 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 	mftfile_size += MFT_FILE_SIZE;
 	if (read == 0) {
 		printf("Error reading from dirve.\n");
-		goto exit;
+		goto exitMFTDump;
 	}
 	
 	fileRecord = (FileRecordHeader*)mftFile;
@@ -236,7 +232,7 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 			unsigned char* mftFile2 = realloc(mftFile, MFTTotalSize);
 			if (mftFile2 == NULL) {
 				printf("Error re-allocating memory for MFT File.\n");
-				goto exit;
+				goto exitMFTDump;
 			} else {
 				mftFile = mftFile2;
 			}
@@ -246,7 +242,13 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 		attribute = (AttributeHeader*)((uint8_t*)attribute + attribute->length);
 	}
 
-	dataRun = (RunHeader*)((uint8_t*)dataAttribute + dataAttribute->dataRunsOffset);
+	if (dataAttribute != NULL) {
+		dataRun = (RunHeader*)((uint8_t*)dataAttribute + dataAttribute->dataRunsOffset);
+	}
+	else {
+		printf("Error parsing $MFT File.\n");
+		goto exitMFTDump;
+	}
 
 	// Calculate and read the rest of the MFT
 	// Thanks for this piece of code to: https://handmade.network/wiki/7002-tutorial_parsing_the_mft
@@ -277,13 +279,13 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 
 		if ((mftfile_size + count) > MFTTotalSize) { // We only allocated MFTTotalSize bytes. If MFT headers are wrong the program will fail
 			printf("Unexpected error allocating memory.\n");
-			goto exit;
+			goto exitMFTDump;
 		}
 		read = ReadFile(drive, &mftFile[mftfile_size], (DWORD)count, &bytesAccessed, NULL); // ReadFile also checks if output buffer is big enough
-		// It's also OK to convert 64 bit count to 32 bit in ReadFile. I think that is impossible to get >4GB chuck of MFT.   
+		// It's also OK to convert 64 bit count to 32 bit in ReadFile. I think that is impossible to get >4GB chunck of MFT.   
 		if (read == 0) {
 			printf("Error reading from dirve.\n");
-			goto exit;
+			goto exitMFTDump;
 		}
 
 		mftfile_size += count;
@@ -296,12 +298,12 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 			if (writtenBytes != mftfile_size) {
 				printf("Error writting to output file.\n");
 				fclose(MFTFile);
-				goto exit;
+				goto exitMFTDump;
 			}
 			fclose(MFTFile);
 		} else {
 			printf("Error writting to output file, file handle closed unexpectedly.\n");
-			goto exit;
+			goto exitMFTDump;
 		}
 		printf("MFT file dumped correctly to: \"%s\".\n", destination);
 	}
@@ -309,40 +311,33 @@ memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
 	MFTStruct->fileContent = mftFile;
 	MFTStruct->size = mftfile_size;
 
+	CloseHandle(drive);
 	free(wszDrive);
-	free(fileRecordFree);
-	free(attributeFree);
-	free(dataAttributeFree);
-	free(dataRunFree);
-
 	return MFTStruct;
 
-exit:
+exitMFTDump:
+	if(drive != NULL)
+		CloseHandle(drive);
 	free(MFTStruct);
 	free(wszDrive);
-	free(fileRecordFree);
-	free(attributeFree);
-	free(dataAttributeFree);
 	free(mftFile);
-	free(dataRunFree);
-
 	exit(1);
 }
 
 void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* letter) {
 	FILE* mft_file_pointer;
-	size_t res_size = 0;
-	size_t maxFiles = 0;
-	size_t fsize;
-	unsigned char* mft_file_contents;
-	char* errorMSG = (char*)malloc(1024);
+	size_t res_size = 0, maxFiles = 0, fsize;
+	unsigned char* mft_file_contents = NULL;
 	uint64_t fileCount = 0;
-	FilesAndFolders* files; 
-	FilesAndFolders* folders;
+	FilesAndFolders* files = NULL; 
+	FilesAndFolders* folders = NULL;
+	wchar_t* start = NULL;
+	paginationStruct* result_pages = NULL;
 
 	// I'm reusing _MFTFilePath to input both filepath or memoryFile
 	// Because Dump&Transcode functionality
 	if (inputType == 0) { // Read from file to memory
+		char* errorMSG = (char*)malloc(1024);
 		errno_t err;
 		char* MFTFilePath;
 		MFTFilePath = (char*)_MFTFilePath;
@@ -350,25 +345,25 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 		if (err != 0) {
 			strerror_s(errorMSG, 256, err);
 			printf("Error reading MFT File: %s\n", errorMSG);
-			exit(6);
+			goto exitMFTTranscode;
 		}
 		free(errorMSG);
 		fseek(mft_file_pointer, 0, SEEK_END);
 		fsize = ftell(mft_file_pointer);
 		if (fsize == 0) {
 			printf("Empty input file.\n");
-			exit(6);
+			goto exitMFTTranscode;
 		}
 		fseek(mft_file_pointer, 0, SEEK_SET);
 		mft_file_contents = (char*) malloc((size_t)fsize + 1);
 		if (mft_file_contents == NULL) {
 			printf("Not enough RAM to load MFT File.\n");
-			exit(6);
+			goto exitMFTTranscode;
 		}
 		size_t readItems = fread_s(mft_file_contents, fsize, fsize, 1, mft_file_pointer);
 		if (readItems != 1) {
 			printf("Failed to read from MFT File.\n");
-			exit(6);
+			goto exitMFTTranscode;
 		}
 		fclose(mft_file_pointer);
 	} else if (inputType == 1) { // Retrieve object from dump
@@ -377,7 +372,7 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 		fsize = file->size;
 	} else {
 		printf("Unexpected behaviour.");
-		exit(12);
+		goto exitMFTTranscode;
 	}
 
 	maxFiles = (fsize / 1024) * 2; // MFT entries are 1024 bytes in size. One File or Directory per entry.
@@ -387,7 +382,7 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 	// We are allocating a hundreds of megabytes
 	if (files == NULL || folders == NULL || maxFiles < 5) { //5 is the minimum number of elements in a MFT
 		printf("Not enough RAM");
-		exit(1);
+		goto exitMFTTranscode;
 	}
 	memset(files, 0, mallocSize);
 	memset(folders, 0, mallocSize);
@@ -396,7 +391,7 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 	int magicNumberCheck = memcmp(mft_file_contents, "FILE", 4);
 	if (magicNumberCheck != 0 || fsize < 1024) {
 		printf("Invalid MFT file");
-		exit(1);
+		goto exitMFTTranscode;
 	}
 
 	// MFT entries are 1024 bytes in size.
@@ -504,12 +499,17 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 	}
 
 	int currentPage = 0;
-	paginationStruct* result_pages = (paginationStruct *) malloc(sizeof(paginationStruct)*1024); //1024 pages will be far far far enough
+	result_pages = (paginationStruct*)malloc(sizeof(paginationStruct) * 1024); //1024 pages will be far far far enough
+	if (result_pages == NULL) {
+		printf("Error allocating memory");
+		goto exitMFTTranscode;
+	}
 	uint64_t aproxBytes = fileCount * (250 + 168); // I'm assuming an avereage of 250 characters per file/folder path and the rest of the parameters are 168 characters lenght
-	unsigned char* page = (unsigned char*)malloc(aproxBytes); // because we are going to track the occupied size, trhere is no need to init this space
+	unsigned char* page = NULL;
+	page = (unsigned char*)malloc(aproxBytes); // because we are going to track the occupied size, trhere is no need to init this space
 	if (page == NULL) {
 		printf("Not enough memory");
-		exit(1);
+		goto exitMFTTranscode;
 	}
 	result_pages[currentPage].fileContent = page;
 	result_pages[currentPage].totalSpace = aproxBytes;
@@ -518,7 +518,12 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 	char* header = "File or Folder|File|$STDINFO Creation Time|$STDINFO Modification Time|$STDINFO Metadata change Time|$STDINFO Access Time|$FILENAME Creation Time|$FILENAME Modification Time|$FILENAME Entry Modified Time|$FILENAME Access Time\n";
 	pageSave(result_pages, header, &currentPage, 225);
 
-	wchar_t* start = (wchar_t*)malloc(3 * sizeof(wchar_t));
+	
+	start = (wchar_t*)malloc(3 * sizeof(wchar_t));
+	if (start == NULL) {
+		printf("Error allocating memory");
+		goto exitMFTTranscode;
+	}
 	memcpy_s(start, 2, letter, 2);
 	memcpy_s(&start[1], 2, ":", 2);
 	memcpy_s(&start[2], 2, "\x0\x0", 2);
@@ -557,6 +562,7 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 					size_t resultBytes = WideCharToMultiByte(CP_UTF8, WC_NO_BEST_FIT_CHARS, folders[pnumber].filename, folders[pnumber].fileNameLength, utf_name, folders[pnumber].fileNameLength, NULL, NULL);
 					pageSave(result_pages, utf_name, &currentPage, resultBytes);
 					pageSave(result_pages, "\\", &currentPage, 1);
+					free(utf_name);
 				}
 			}
 
@@ -564,18 +570,19 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 			size_t resultBytes = WideCharToMultiByte(CP_UTF8, WC_NO_BEST_FIT_CHARS, folders[cnt].filename, folders[cnt].fileNameLength, utf_name, folders[cnt].fileNameLength, NULL, NULL);
 			pageSave(result_pages, utf_name, &currentPage, resultBytes);
 			pageSave(result_pages, "|", &currentPage, 1);
+			free(utf_name);
 
 			FILETIME time;
 			SYSTEMTIME timeHuman;
 			char timeString[20];
-
+			
 			time.dwLowDateTime = (DWORD)folders[cnt].creationTime;
 			time.dwHighDateTime = (DWORD)(folders[cnt].creationTime >> 32);
 			FileTimeToSystemTime(&time, &timeHuman);
 			sprintf_s(timeString, 20, "%04d-%02d-%02d %02d:%02d:%02d", timeHuman.wYear, timeHuman.wMonth, timeHuman.wDay, timeHuman.wHour, timeHuman.wMinute, timeHuman.wSecond);
 			pageSave(result_pages, timeString, &currentPage, 19);
 			pageSave(result_pages, "|", &currentPage, 1);
-
+			
 			time.dwLowDateTime = (DWORD)folders[cnt].modificationTime;
 			time.dwHighDateTime = (DWORD)(folders[cnt].modificationTime >> 32);
 			FileTimeToSystemTime(&time, &timeHuman);
@@ -660,6 +667,7 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 				size_t resultBytes = WideCharToMultiByte(CP_UTF8, WC_NO_BEST_FIT_CHARS, folders[pnumber].filename, folders[pnumber].fileNameLength, utf_name, folders[pnumber].fileNameLength, NULL, NULL);
 				pageSave(result_pages, utf_name, &currentPage, resultBytes);
 				pageSave(result_pages, "\\", &currentPage, 1);
+				free(utf_name);
 			}
 		}
 
@@ -667,6 +675,7 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 		size_t resultBytes = WideCharToMultiByte(CP_UTF8, WC_NO_BEST_FIT_CHARS, files[j].filename, files[j].fileNameLength, utf_name, files[j].fileNameLength, NULL, NULL);
 		pageSave(result_pages, utf_name, &currentPage, resultBytes); 
 		pageSave(result_pages, "|", &currentPage, 1);
+		free(utf_name);
 
 		FILETIME time;
 		SYSTEMTIME timeHuman;
@@ -737,6 +746,19 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 		}
 		fclose(mft_res_file_pointer);
 	}
+
+exitMFTTranscode:
+	free(mft_file_contents);
+	free(files);
+	free(folders);
+	if (result_pages != NULL) {
+		for (int pageNumber = 0; pageNumber <= currentPage; pageNumber++) {
+			free(result_pages[pageNumber].fileContent);
+		}
+	}
+	free(result_pages);
+	free(start);
+	free(_MFTFilePath);
 }
 
 int main(int argc, char* argv[])
@@ -779,7 +801,6 @@ int main(int argc, char* argv[])
 					letterW[1] = 0;
 					memoryFile* MFTFile = MFTDump(letterW, NULL, 0);
 					MFTTranscode(MFTFile, argv[3], 1, letterW);
-					free(MFTFile);
 				} else {
 					printf("Unexpected allocation error.");
 				}
@@ -793,4 +814,5 @@ int main(int argc, char* argv[])
 		printf("usage:\n\tmft.exe dump [Drive letter] [MFT Dump] \n\tDumps the MFT of the selected drive into the described file \n\n\ttranscode [MFT Dump] [CSV Result] \n\tProceses the MFT of the selected drive into a CSV to the described file\n\n\tDT [Drive letter][CSV Result] \n\tThe two other options together");
 		exit(1);
 	}
+	printf("asd");
 }
