@@ -5,133 +5,27 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <windows.h>
+#include "structs.c"
 
-// Some structs come from: https://handmade.network/wiki/7002-tutorial_parsing_the_mft
-#pragma pack(push,1)
-typedef struct {
-	uint32_t    magic;
-	uint16_t    updateSequenceOffset;
-	uint16_t    updateSequenceSize;
-	uint64_t    logSequence;
-	uint16_t    sequenceNumber;
-	uint16_t    hardLinkCount;
-	uint16_t    firstAttributeOffset;
-	uint16_t    inUse : 1;
-	uint16_t    isDirectory : 1;
-	uint32_t    usedSize;
-	uint32_t    allocatedSize;
-	uint64_t    fileReference;
-	uint16_t    nextAttributeID;
-	uint16_t    unused;
-	uint32_t    recordNumber;
-} FileRecordHeader;
-typedef struct {
-	uint32_t    attributeType;
-	uint32_t    length;
-	uint8_t     nonResident;
-	uint8_t     nameLength;
-	uint16_t    nameOffset;
-	uint16_t    flags;
-	uint16_t    attributeID;
-} AttributeHeader;
-typedef struct {
-	AttributeHeader attributeHeader;
-	uint64_t    firstCluster;
-	uint64_t    lastCluster;
-	uint16_t    dataRunsOffset;
-	uint16_t    compressionUnit;
-	uint32_t    unused;
-	uint64_t    attributeAllocated;
-	uint64_t    attributeSize;
-	uint64_t    streamDataSize;
-} NonResidentAttributeHeader;
-typedef struct {
-	AttributeHeader attributeHeader;
-	uint32_t    attributeLength;
-	uint16_t    attributeOffset;
-	uint8_t     indexed;
-	uint8_t     unused;
-} ResidentAttributeHeader;
-typedef struct {
-	uint8_t     lengthFieldBytes : 4;
-	uint8_t     offsetFieldBytes : 4;
-} RunHeader;
-typedef struct {
-	ResidentAttributeHeader residentAttributeHeader;
-	uint64_t    parentRecordNumber : 48;  
-	uint64_t    sequenceNumber : 16;
-	uint64_t    creationTime;
-	uint64_t    modificationTime;
-	uint64_t    metadataModificationTime;  // refered to the MFT entry
-	uint64_t    readTime; // same as last acces time
-	uint64_t    allocatedSize;
-	uint64_t    realSize;
-	uint32_t    flags;
-	uint32_t    repase;
-	uint8_t     fileNameLength;        
-	uint8_t     namespaceType;     
-	wchar_t     fileName[1]; 
-} FileNameAttributeHeader;
-typedef struct {
-	uint64_t	recordNumber;
-	uint64_t	parentRecordNumber;
-	wchar_t*	filename;
-	uint8_t     fileNameLength;
-	uint64_t	isDirectory;
-	uint64_t    creationTime;
-	uint64_t    modificationTime;
-	uint64_t    metadataTime;
-	uint64_t    accesTime;
-	uint64_t    FNcreationTime;
-	uint64_t    FNmodificationTime;
-	uint64_t    FNmetadataTime;
-	uint64_t    FNaccesTime;
-} FilesAndFolders;
-typedef struct {
-	ResidentAttributeHeader residentAttributeHeader;
-	uint64_t	fileCreationTime;
-	uint64_t	fileAlteredTime;
-	uint64_t	changedTime; // refered to the MFT entry
-	uint64_t	fileReadTime; // same as last acces time
-	uint32_t	permissions;
-} StandardInformation;
-typedef struct {
-	uint8_t     jump[3];
-	char        name[8];
-	uint16_t    bytesPerSector;
-	uint8_t     sectorsPerCluster;
-	uint16_t    reservedSectors;
-	uint8_t     unused0[3];
-	uint16_t    unused1;
-	uint8_t     media;
-	uint16_t    unused2;
-	uint16_t    sectorsPerTrack;
-	uint16_t    headsPerCylinder;
-	uint32_t    hiddenSectors;
-	uint32_t    unused3;
-	uint32_t    unused4;
-	uint64_t    totalSectors;
-	uint64_t    mftStart;
-	uint64_t    mftMirrorStart;
-	uint32_t    clustersPerFileRecord;
-	uint32_t    clustersPerIndexBlock;
-	uint64_t    serialNumber;
-	uint32_t    checksum;
-	uint8_t     bootloader[426];
-	uint16_t    bootSignature;
-} BootSector;
-#pragma pack(pop)
+#define MFTFileRecordSize 1024
+#define $DATA 0x80
+#define $LastAttribute 0xFFFFFFFF
+#define MAXAttributes 18
+#define bootSectorSize 512
 
-typedef struct {
-	unsigned char* fileContent;
-	size_t size;
-} memoryFile;
-
-typedef struct {
-	unsigned char* fileContent;
-	size_t totalSpace;
-	size_t occupiedSpace;
-} paginationStruct;
+FILE* openResultFile(char* resultFileName);
+RunHeader* getFirstMFTDataRun(MemoryFile* MFTMemoryFile, DiskInformation* diskInformation);
+MemoryFile* MFTDump(char* driveLetter);
+NonResidentAttributeHeader* getDataAttribute(unsigned char* MFTFile);
+char* GetFullPath(char* resultFileName);
+inline void* allocateMemory(uint64_t size);
+void writeResultFile(MemoryFile* MFT, FILE* MFTResultFile);
+void checkLetter(char* letter);
+void openRawDisk(DiskInformation* diskInformation);
+void readDriveBootSector(DiskInformation* diskInformation);
+void readFistMFTFileRecord(MemoryFile* MFTMemoryFile, DiskInformation* diskInformation);
+void readMFTFileData(MemoryFile* MFTMemoryFile, DiskInformation* diskInformation, RunHeader* currentMFTDataRun);
+void MFTSanityChecks(MemoryFile* MFT);
 
 inline void pageSave(paginationStruct* result_pages, char* whatToSave, int* currentPage, size_t size) {
 	if (result_pages[*currentPage].occupiedSpace + size > result_pages[*currentPage].totalSpace) { //no more space in this page, create a new one
@@ -151,177 +45,6 @@ inline void pageSave(paginationStruct* result_pages, char* whatToSave, int* curr
 	}
 	memcpy_s(&result_pages[*currentPage].fileContent[result_pages[*currentPage].occupiedSpace], size, whatToSave, size);
 	result_pages[*currentPage].occupiedSpace += size;
-}
-
-memoryFile* MFTDump(wchar_t* disk, char* destination, int toFile) {
-	HANDLE drive = NULL;
-	DWORD bytesAccessed;
-	int read;
-	int MFT_FILE_SIZE = 1024;
-	uint64_t MFTTotalSize = MFT_FILE_SIZE, mftfile_size = 0, clusterNumber = 0, recordsProcessed = 0, bytesPerCluster = 0;
-	BootSector bootSector;
-	FILE* MFTFile;
-	LPSTR messageBuffer = NULL;
-	size_t writtenBytes;
-	LONG lpDistanceToMoveHigh;
-	memoryFile* MFTStruct = (memoryFile*)malloc(sizeof(memoryFile));
-	wchar_t* wszDrive = (wchar_t*) malloc(14);
-	FileRecordHeader* fileRecord;
-	AttributeHeader* attribute;
-	NonResidentAttributeHeader* dataAttribute = NULL;
-	unsigned char* mftFile = (unsigned char*) malloc(MFT_FILE_SIZE);
-	RunHeader* dataRun;
-
-	if (MFTStruct == NULL || wszDrive == NULL || mftFile == NULL) {
-		printf("Unexpected error allocating memory");
-		goto exitMFTDump;
-	}
-
-	// Open RAW device
-	swprintf(wszDrive, 7, L"\\\\.\\%ls:", disk);
-	drive = CreateFile(wszDrive, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
-	if (drive == INVALID_HANDLE_VALUE) {
-		printf("Error accessing Drive. Maybe incorrect letter maybe you have not sufficient privileges.\n");
-		goto exitMFTDump;
-	}
-	
-	if (toFile == 1) {
-		errno_t err;
-		// Open and check permisions for results file
-		err = fopen_s(&MFTFile, destination, "w+b");
-		if (err != 0) {
-			char* errorMSG = (char *) malloc(1024);
-			if (errorMSG != NULL) {
-				strerror_s(errorMSG, 256, err);
-				printf("Error creating output file: %s\n", errorMSG);
-				free(errorMSG);
-			}
-			printf("Unexpected error in error\n");
-			goto exitMFTDump;
-		}
-	} else {
-		MFTFile = NULL;
-	}
-
-	// Read boot sector
-	SetFilePointer(drive, 0, 0, FILE_BEGIN);
-	read = ReadFile(drive, &bootSector, 512, &bytesAccessed, NULL);
-	if (read == 0) {
-		printf("Error reading from dirve.\n");
-		goto exitMFTDump;
-	}
-
-	// Calcualte and read first MFT FILE record
-	bytesPerCluster = (uint64_t)bootSector.bytesPerSector * (uint64_t)bootSector.sectorsPerCluster;
-	lpDistanceToMoveHigh = (bootSector.mftStart * bytesPerCluster) >> 32;
-	SetFilePointer(drive, (bootSector.mftStart * bytesPerCluster) & 0xFFFFFFFF, &lpDistanceToMoveHigh, FILE_BEGIN);
-	read = ReadFile(drive, &mftFile[mftfile_size], MFT_FILE_SIZE, &bytesAccessed, NULL);
-	mftfile_size += MFT_FILE_SIZE;
-	if (read == 0) {
-		printf("Error reading from dirve.\n");
-		goto exitMFTDump;
-	}
-	
-	fileRecord = (FileRecordHeader*)mftFile;
-	attribute = (AttributeHeader*)(mftFile + fileRecord->firstAttributeOffset);
-	
-	while (1) {
-		if (attribute->attributeType == 0x80) {
-			dataAttribute = (NonResidentAttributeHeader*)attribute;
-			MFTTotalSize += dataAttribute->attributeAllocated; // This attribute should be the real MFT size
-			unsigned char* mftFile2 = realloc(mftFile, MFTTotalSize);
-			if (mftFile2 == NULL) {
-				printf("Error re-allocating memory for MFT File.\n");
-				goto exitMFTDump;
-			} else {
-				mftFile = mftFile2;
-			}
-		} else if (attribute->attributeType == 0xFFFFFFFF) {
-			break;
-		}
-		attribute = (AttributeHeader*)((uint8_t*)attribute + attribute->length);
-	}
-
-	if (dataAttribute != NULL) {
-		dataRun = (RunHeader*)((uint8_t*)dataAttribute + dataAttribute->dataRunsOffset);
-	}
-	else {
-		printf("Error parsing $MFT File.\n");
-		goto exitMFTDump;
-	}
-
-	// Calculate and read the rest of the MFT
-	// Thanks for this piece of code to: https://handmade.network/wiki/7002-tutorial_parsing_the_mft
-	while (((uint8_t*)dataRun - (uint8_t*)dataAttribute) < dataAttribute->attributeHeader.length && dataRun->lengthFieldBytes) {
-		uint64_t length = 0, offset = 0, filesRemaining, positionInBlock = 0, from, count;
-
-		for (int i = 0; i < dataRun->lengthFieldBytes; i++) {
-			length |= (uint64_t)(((uint8_t*)dataRun)[1 + i]) << (i * 8);
-		}
-		for (int i = 0; i < dataRun->offsetFieldBytes; i++) {
-			offset |= (uint64_t)(((uint8_t*)dataRun)[1 + dataRun->lengthFieldBytes + i]) << (i * 8);
-		}
-		if (offset & ((uint64_t)1 << (dataRun->offsetFieldBytes * 8 - 1))) {
-			for (int i = dataRun->offsetFieldBytes; i < 8; i++) {
-				offset |= (uint64_t)0xFF << (i * 8);
-			}
-		}
-
-		clusterNumber += offset;
-		dataRun = (RunHeader*)((uint8_t*)dataRun + 1 + dataRun->lengthFieldBytes + dataRun->offsetFieldBytes);
-
-		filesRemaining = length * bytesPerCluster / MFT_FILE_SIZE;
-		from = clusterNumber * bytesPerCluster;
-		count = filesRemaining * MFT_FILE_SIZE;
-
-		lpDistanceToMoveHigh = from >> 32;
-		SetFilePointer(drive, from & 0xFFFFFFFF, &lpDistanceToMoveHigh, FILE_BEGIN);
-
-		if ((mftfile_size + count) > MFTTotalSize) { // We only allocated MFTTotalSize bytes. If MFT headers are wrong the program will fail
-			printf("Unexpected error allocating memory.\n");
-			goto exitMFTDump;
-		}
-		read = ReadFile(drive, &mftFile[mftfile_size], (DWORD)count, &bytesAccessed, NULL); // ReadFile also checks if output buffer is big enough
-		// It's also OK to convert 64 bit count to 32 bit in ReadFile. I think that is impossible to get >4GB chunck of MFT.   
-		if (read == 0) {
-			printf("Error reading from dirve.\n");
-			goto exitMFTDump;
-		}
-
-		mftfile_size += count;
-	}
-
-	// Write the MFT to destination file
-	if (toFile == 1) {
-		if (MFTFile != NULL) {
-			writtenBytes = fwrite(mftFile, 1, mftfile_size, MFTFile); // No need to check if mftfile_size is bigger than mftFile allocation because ReadFile has already checked it
-			if (writtenBytes != mftfile_size) {
-				printf("Error writting to output file.\n");
-				fclose(MFTFile);
-				goto exitMFTDump;
-			}
-			fclose(MFTFile);
-		} else {
-			printf("Error writting to output file, file handle closed unexpectedly.\n");
-			goto exitMFTDump;
-		}
-		printf("MFT file dumped correctly to: \"%s\".\n", destination);
-	}
-	// Return de MFT memory file to transcode if necessary
-	MFTStruct->fileContent = mftFile;
-	MFTStruct->size = mftfile_size;
-
-	CloseHandle(drive);
-	free(wszDrive);
-	return MFTStruct;
-
-exitMFTDump:
-	if(drive != NULL)
-		CloseHandle(drive);
-	free(MFTStruct);
-	free(wszDrive);
-	free(mftFile);
-	exit(1);
 }
 
 void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* letter) {
@@ -367,7 +90,7 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 		}
 		fclose(mft_file_pointer);
 	} else if (inputType == 1) { // Retrieve object from dump
-		memoryFile* file = (memoryFile*)_MFTFilePath;
+		MemoryFile* file = (MemoryFile*)_MFTFilePath;
 		mft_file_contents = file->fileContent;
 		fsize = file->size;
 	} else {
@@ -758,7 +481,6 @@ exitMFTTranscode:
 	}
 	free(result_pages);
 	free(start);
-	free(_MFTFilePath);
 }
 
 int main(int argc, char* argv[])
@@ -769,24 +491,19 @@ int main(int argc, char* argv[])
 	}
 
 	if (strcmp("dump", argv[1]) == 0 && argc == 4) {
-		if (strlen(argv[2]) == 1) {
-			int letter = toupper(*argv[2]);
-			if (letter >= 65 && letter <= 90) {
-				wchar_t* letterW = malloc(4);
-				if (letterW) {
-					letterW[0] = (wchar_t)letter;
-					letterW[1] = 0;
-					memoryFile* MFTFile = MFTDump(letterW, argv[3], 1);
-					free(MFTFile);
-				} else {
-					printf("Unexpected allocation error.");
-				}
-			} else {
-				printf("Not a valid disk letter.");
-			}
-		} else {
-			printf("Not a valid disk letter.");
-		}
+		MemoryFile* MFT;
+		FILE* MFTResultFile;
+		char* resultFileName = argv[3];
+		char* driveLetter = argv[2];
+
+		MFTResultFile = openResultFile(resultFileName);
+		MFT = MFTDump(driveLetter);
+
+		writeResultFile(MFT, MFTResultFile);
+
+		printf("INFO: Result file successfully written to: %s\r\n", GetFullPath(resultFileName));
+
+		fclose(MFTResultFile);
 	} else if (strcmp("transcode", argv[1]) == 0 && argc == 4) {
 		// I'm  not going to check if input params are a good path
 		// because if later fopen_s opens them it's OK for me
@@ -799,8 +516,16 @@ int main(int argc, char* argv[])
 				if (letterW) {
 					letterW[0] = (wchar_t)letter;
 					letterW[1] = 0;
-					memoryFile* MFTFile = MFTDump(letterW, NULL, 0);
-					MFTTranscode(MFTFile, argv[3], 1, letterW);
+
+					MemoryFile* MFT;
+					FILE* MFTResultFile;
+					char* resultFileName = argv[3];
+					char* driveLetter = argv[2];
+
+					MFT = MFTDump(driveLetter);
+					MFTTranscode(MFT, argv[3], 1, letterW);
+
+
 				} else {
 					printf("Unexpected allocation error.");
 				}
@@ -814,5 +539,348 @@ int main(int argc, char* argv[])
 		printf("usage:\n\tmft.exe dump [Drive letter] [MFT Dump] \n\tDumps the MFT of the selected drive into the described file \n\n\ttranscode [MFT Dump] [CSV Result] \n\tProceses the MFT of the selected drive into a CSV to the described file\n\n\tDT [Drive letter][CSV Result] \n\tThe two other options together");
 		exit(1);
 	}
-	printf("asd");
+}
+
+
+FILE* openResultFile(char* resultFileName)
+{
+	FILE* MFTFile;
+	char* resultFullPath = NULL;
+
+	if (fopen_s(&MFTFile, resultFileName, "w+b") != 0)
+	{
+		printf("Error: Unexpected error opening result file: %s\r\n", resultFullPath);
+		exit(1);
+	}
+
+	return MFTFile;
+}
+
+MemoryFile* MFTDump(char* driveLetter)
+{
+	DiskInformation* diskInformation;
+	MemoryFile* MFTMemoryFile;
+	RunHeader* currentMFTDataRun;
+
+	checkLetter(driveLetter);
+
+	diskInformation = (DiskInformation*)allocateMemory(sizeof(DiskInformation));
+	diskInformation->driveLetter = driveLetter;
+	diskInformation->MFTSize = 0;
+
+	MFTMemoryFile = (MemoryFile*)allocateMemory(sizeof(MemoryFile));
+	MFTMemoryFile->fileContent = (unsigned char*)allocateMemory(MFTFileRecordSize);
+	MFTMemoryFile->size = 0;
+
+	openRawDisk(diskInformation);
+	readDriveBootSector(diskInformation);
+	readFistMFTFileRecord(MFTMemoryFile, diskInformation);
+	currentMFTDataRun = getFirstMFTDataRun(MFTMemoryFile, diskInformation);
+	readMFTFileData(MFTMemoryFile, diskInformation, currentMFTDataRun);
+	return MFTMemoryFile;
+}
+
+void checkLetter(char* letter)
+{
+	int isValid = 1;
+	unsigned char* letterChar;
+
+	if (strlen(letter) != 1)
+	{
+		isValid = 0;
+	}
+
+	letterChar = (unsigned char*)letter;
+	if (*letterChar >= 'A' && *letterChar <= 'Z')
+	{
+		isValid = 1;
+	}
+	else if (*letterChar >= 'a' && *letterChar <= 'z')
+	{
+		*letterChar = *letterChar - 32;
+		isValid = 1;
+	}
+	else
+	{
+		isValid = 0;
+	}
+
+	if (!isValid)
+	{
+		printf("Error: Invalid input letter\r\n");
+		exit(1);
+	}
+}
+
+inline void* allocateMemory(uint64_t size)
+{
+	void* var = malloc(size);
+
+	if (var == NULL)
+	{
+		printf("Error allocating memory\n");
+		exit(1);
+	}
+
+	return var;
+}
+
+void openRawDisk(DiskInformation* diskInformation)
+{
+	char* driveName;
+
+	driveName = (char*)allocateMemory(7);
+
+	sprintf_s(driveName, 7, "\\\\.\\%s:", diskInformation->driveLetter);
+
+	diskInformation->handler = CreateFileA(driveName, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+	if (diskInformation->handler == INVALID_HANDLE_VALUE)
+	{
+		printf("Error: can not open drive. Maybe incorrect letter or maybe you have not sufficient privileges.\r\n");
+		exit(1);
+	}
+
+	free(driveName);
+
+}
+
+void readDriveBootSector(DiskInformation* diskInformation)
+{
+	DWORD bytesAccessed;
+	int readFailed;
+
+	diskInformation->bootSector = (BootSector*)allocateMemory(sizeof(BootSector));
+
+	SetFilePointer(diskInformation->handler, 0, 0, FILE_BEGIN);
+
+	readFailed = ReadFile(
+		diskInformation->handler,
+		diskInformation->bootSector,
+		bootSectorSize,
+		&bytesAccessed,
+		NULL
+	);
+
+	if (!readFailed || bytesAccessed != bootSectorSize)
+	{
+		printf("Error: can not read boot sector from drive.\r\n");
+		exit(1);
+	}
+
+	printf("INFO: Boot sector successfully read.\r\n");
+}
+
+void readFistMFTFileRecord(MemoryFile* MFTMemoryFile, DiskInformation* diskInformation)
+{
+	int readFailed;
+	uint64_t MFTLocation;
+	DWORD bytesAccessed;
+
+	diskInformation->bytesPerCluster =
+		(uint64_t)(diskInformation->bootSector->bytesPerSector) *
+		(uint64_t)(diskInformation->bootSector->sectorsPerCluster);
+
+	MFTLocation =
+		(diskInformation->bootSector->MFTFirstClusterLocation) *
+		(diskInformation->bytesPerCluster);
+
+	LONG MFTLocation_low = (LONG)(MFTLocation & 0xFFFFFFFF);
+	LONG MFTLocation_high = (LONG)(MFTLocation >> 32);
+
+	SetFilePointer(diskInformation->handler, MFTLocation_low, &MFTLocation_high, FILE_BEGIN);
+
+	readFailed = ReadFile(
+		diskInformation->handler,
+		&MFTMemoryFile->fileContent[MFTMemoryFile->size],
+		MFTFileRecordSize,
+		&bytesAccessed,
+		NULL
+	);
+
+	if (!readFailed || bytesAccessed != MFTFileRecordSize)
+	{
+		printf("Error: can not read from drive.\r\n");
+		exit(1);
+	}
+}
+
+RunHeader* getFirstMFTDataRun(MemoryFile* MFTMemoryFile, DiskInformation* diskInformation)
+{
+	RunHeader* firstMFTDataRun;
+
+	diskInformation->MFTDataAttribute = getDataAttribute(MFTMemoryFile->fileContent);
+	diskInformation->MFTSize += diskInformation->MFTDataAttribute->attributeAllocated;
+
+	MFTMemoryFile->fileContent =
+		(unsigned char*)realloc(MFTMemoryFile->fileContent, diskInformation->MFTSize);
+
+	if (MFTMemoryFile->fileContent == NULL) {
+		printf("Error: Can not re-allocate memory for MFT File.\n");
+		exit(1);
+	}
+
+	firstMFTDataRun = (RunHeader*)((uint8_t*)diskInformation->MFTDataAttribute + diskInformation->MFTDataAttribute->dataRunsOffset);
+	return firstMFTDataRun;
+}
+
+NonResidentAttributeHeader* getDataAttribute(unsigned char* MFTFile)
+{
+	FileRecordHeader* MFTFileRecord;
+	AttributeHeader* attribute;
+	int currentAttribute = 0;
+	size_t nextAttributeOffset;
+	size_t maxAttributeOffset = (size_t)(MFTFile + MFTFileRecordSize);
+
+	MFTFileRecord = (FileRecordHeader*)MFTFile;
+	attribute = (AttributeHeader*)(MFTFile + MFTFileRecord->firstAttributeOffset);
+
+	while (1)
+	{
+		if (attribute->attributeType == $DATA)
+		{
+			return (NonResidentAttributeHeader*)attribute;
+		}
+		else if (attribute->attributeType == $LastAttribute)
+		{
+			printf("Error: can not parse Data Attribute, $DATA not found\r\n");
+			exit(1);
+		}
+
+		nextAttributeOffset = (size_t)((uint8_t*)attribute + attribute->length);
+
+		/* This check will disallow random memory access */
+		if (nextAttributeOffset > maxAttributeOffset)
+		{
+			printf("Error: can not parse Data Attribute, inconsistent headers\r\n");
+			exit(1);
+		}
+
+		attribute = (AttributeHeader*)(nextAttributeOffset);
+		currentAttribute++;
+
+		/* The following check is necessary to avoid an infinite loop */
+		if (currentAttribute > MAXAttributes)
+		{
+			printf("Error: can not parse Data Attribute, inconsistent headers\r\n");
+			exit(1);
+		}
+	}
+}
+
+void readMFTFileData(MemoryFile* MFTMemoryFile, DiskInformation* diskInformation, RunHeader* currentMFTDataRun)
+{
+	int read;
+	DWORD bytesAccessed;
+	LONG MFTLocation_low, MFTLocation_high;
+	uint32_t currentDataRunOffset = (uint32_t)((uint8_t*)currentMFTDataRun - (uint8_t*)(diskInformation->MFTDataAttribute));
+	uint64_t clusterNumber = 0;
+
+	// Last DataRun header is defined by its Header == 0x00 
+	while (currentDataRunOffset < diskInformation->MFTDataAttribute->attributeHeader.length && currentMFTDataRun->lengthFieldBytes)
+	{
+		uint64_t length = 0, offset = 0, from, count;
+
+		// The first 4 bits of data run indicates de size of the length field 
+		// The next 4 bits of data run indicates de size of the offset field 
+		// This two field are before the first byte 
+		// Thanks for this piece of code to: https://handmade.network/wiki/7002-tutorial_parsing_the_mft
+		for (int i = 0; i < currentMFTDataRun->lengthFieldBytes; i++)
+		{
+			length |= (uint64_t)(((uint8_t*)currentMFTDataRun)[1 + i]) << (i * 8);
+		}
+
+		for (int i = 0; i < currentMFTDataRun->offsetFieldBytes; i++)
+		{
+			offset |= (uint64_t)(((uint8_t*)currentMFTDataRun)[1 + currentMFTDataRun->lengthFieldBytes + i]) << (i * 8);
+		}
+
+		if (offset & ((uint64_t)1 << (currentMFTDataRun->offsetFieldBytes * 8 - 1)))
+		{
+			for (int i = currentMFTDataRun->offsetFieldBytes; i < 8; i++)
+			{
+				offset |= (uint64_t)0xFF << (i * 8);
+			}
+		}
+
+		// DataRuns are stored one after the other 
+		currentMFTDataRun = (RunHeader*)((uint8_t*)currentMFTDataRun + 1 + currentMFTDataRun->lengthFieldBytes +
+			currentMFTDataRun->offsetFieldBytes);
+		currentDataRunOffset = (uint32_t)((uint8_t*)currentMFTDataRun - (uint8_t*)(diskInformation->MFTDataAttribute));
+
+		// The offset filed is relative to the previous DataRun offset 
+		clusterNumber += offset;
+		// The offset is defined as LCN (Logical Cluster Number), so we need to calculate de byte offset 
+		from = clusterNumber * (diskInformation->bytesPerCluster);
+		// Length also in clusters 
+		count = length * (diskInformation->bytesPerCluster);
+
+		MFTLocation_low = (LONG)(from & 0xFFFFFFFF);
+		MFTLocation_high = (LONG)(from >> 32);
+		SetFilePointer(diskInformation->handler, MFTLocation_low, &MFTLocation_high, FILE_BEGIN);
+		if ((MFTMemoryFile->size + count) > diskInformation->MFTSize)
+		{
+			printf("Error: Real size seems to be greater than headers defined.\r\n");
+			exit(1);
+		}
+
+		read = ReadFile(diskInformation->handler, &MFTMemoryFile->fileContent[MFTMemoryFile->size], (DWORD)count, &bytesAccessed, NULL);
+		if (read == 0)
+		{
+			printf("Error: Cannot read MFT DataRun from drive offset.\r\n");
+			exit(1);
+		}
+		MFTMemoryFile->size += count;
+	}
+
+	if (MFTMemoryFile->size == diskInformation->MFTSize)
+	{
+		printf("INFO: MFT File read successfully.\r\n");
+	}
+	else
+	{
+		printf("Warning: Stored MFT size and read size differs.\r\n");
+	}
+}
+
+char* GetFullPath(char* resultFileName)
+{
+	char* resultFullPath;
+	DWORD resultFullPathLenght;
+
+	resultFullPathLenght = GetFullPathNameA(resultFileName, 0, NULL, NULL);
+	if (resultFullPathLenght == 0)
+	{
+		printf("Error: Unexpected pathname.\n");
+		exit(1);
+	}
+	resultFullPath = (char*)allocateMemory(resultFullPathLenght);
+
+	GetFullPathNameA(resultFileName, resultFullPathLenght, resultFullPath, NULL);
+
+	return resultFullPath;
+}
+
+void writeResultFile(MemoryFile* MFT, FILE* MFTResultFile)
+{
+	if (fwrite(MFT->fileContent, 1, MFT->size, MFTResultFile) != MFT->size)
+	{
+		printf("Error: Error writing to output file.\r\n");
+		exit(1);
+	}
+}
+
+void MFTSanityChecks(MemoryFile* MFT)
+{
+	int magicNumberCheck = memcmp(MFT->fileContent, "FILE", 4);
+	if (MFT->size < (1024 * 5) || MFT->size % 1024 != 0 || magicNumberCheck != 0)
+	{
+		//Valid MFT will have at least 5 Files.
+		//MFT is made by Files of 1024 bytes.
+		printf("Error: Invalid MFT.\r\n");
+		exit(1);
+	}
+	/* TODO:
+			Better sanity checks
+			Analyse anyway, incomplete MFT reconstruction
+	*/
 }
