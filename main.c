@@ -71,8 +71,8 @@ void MFTTranscode(void* _MFTFilePath, char* resultFile, int inputType, wchar_t* 
 			goto exitMFTTranscode;
 		}
 		free(errorMSG);
-		fseek(mft_file_pointer, 0, SEEK_END);
-		fsize = ftell(mft_file_pointer);
+		_fseeki64(mft_file_pointer, 0, SEEK_END);
+		fsize = _ftelli64(mft_file_pointer);
 		if (fsize == 0) {
 			printf("Empty input file.\n");
 			goto exitMFTTranscode;
