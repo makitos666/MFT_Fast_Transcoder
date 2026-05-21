@@ -5,7 +5,7 @@
 
 MFT Fast Transcoder is a fast forensic tool to analyze MFT of NTFS partitions.
 I am focused on Windows, the code makes use of libraries and specific functions of this operating system. 
-Also, I am only developing for x64, this is a forensic tool, it is memory intensive and we are in 2021.
+Also, I am only developing for x64, this is a forensic tool, it is memory intensive and we are in 20XX.
 This tool extracts in an instant a list of files and folders hosted on an NTFS in CSV format with the following properties:
 - File or Folder
 - Name with path

@@ -146,9 +146,13 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.c" />
+    <ClCompile Include="mft_dump.c" />
+    <ClCompile Include="mft_io.c" />
+    <ClCompile Include="mft_transcode.c" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="main.h" />
+    <ClInclude Include="mft.h" />
+    <ClInclude Include="structs.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
